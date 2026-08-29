@@ -5,6 +5,7 @@ from tests.fixtures import (
     make_blank_drawing,
     make_busy_drawing,
     make_synthetic_drawing,
+    make_synthetic_drawing_v2,
     world_to_pt,
 )
 
@@ -26,6 +27,19 @@ def test_synthetic_ground_truth_is_exact(tmp_path):
     # sampled length of the cubic Bezier (t = 0..1 in 8 steps); locked so any
     # change to the curve or the sampler fails here first.
     assert truth["curve_run_pt"] == 179.07943634084018
+
+
+def test_synthetic_v2_ground_truth(tmp_path):
+    # Task 13: v2 = harder fixture (3 areas, 2-digit anchor class, scale 1:200).
+    pdf, truth = make_synthetic_drawing_v2(tmp_path)
+    assert fitz.open(pdf).page_count == 1
+    assert len(truth["areas"]) == 3
+    assert truth["scale_factor"] == 200
+    # distinct from v1's 50/64/36 values so benchmarks can tell them apart
+    assert truth["areas"]["asphalt"] == 144.0
+    assert truth["areas"]["planting"] == 80.0
+    assert truth["areas"]["paving"] == 60.0
+    assert truth["counts"]["manhole"] == 2
 
 
 def test_world_to_pt_scale_exact():

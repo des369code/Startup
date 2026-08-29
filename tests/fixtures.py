@@ -12,6 +12,7 @@ import fitz
 
 PAGE_W, PAGE_H = 842.0, 595.0
 SCALE_FACTOR = 100
+V2_SCALE_FACTOR = 200
 
 
 def world_to_pt(value_m: float, factor: int = 100) -> float:
@@ -22,6 +23,11 @@ def world_to_pt(value_m: float, factor: int = 100) -> float:
 def _m(value_m: float) -> float:
     """Metres -> points at the fixture's 1:100 scale."""
     return world_to_pt(value_m, SCALE_FACTOR)
+
+
+def _m2(value_m: float) -> float:
+    """Metres -> points at the fixture v2's 1:200 scale."""
+    return world_to_pt(value_m, V2_SCALE_FACTOR)
 
 
 def _bezier(p0, c1, c2, p1, n=8):
@@ -158,6 +164,48 @@ def make_synthetic_drawing(tmp_path) -> tuple[str, dict]:
     doc.save(pdf)
     doc.close()
     return pdf, _ground_truth(curve_run_pt, curve_chain_run_pt)
+
+
+def make_synthetic_drawing_v2(tmp_path) -> tuple[str, dict]:
+    """Task 13's harder scenario: 3 filled areas + a 2-digit anchor class,
+    scale 1:200. Returns (pdf_path, ground_truth) with len(areas) == 3,
+    scale_factor == 200, and area values distinct from v1 (50/64/36) so
+    benchmarks can tell the two sheets apart.
+
+    Same A4 landscape + drawing helpers as v1 (deterministic, on-grid, so the
+    rel 1e-6 exactness tolerances hold). No stroke-only rings and no runs: the
+    filled rects' outline rings are re-found by polygonize and deduped away by
+    measure(), so the v2 candidate set is exactly 3 fills + 2 anchors — which
+    is what FakeSemantics's scripted v2 map keys on (fills by index, anchors
+    -> the anchor class)."""
+    doc, page = _new_page()
+    d = 1.0
+
+    # asphalt: filled 12 m x 12 m -> 144.0 m2
+    page.draw_rect(fitz.Rect(72.0, 40.0, 72.0 + _m2(12), 40.0 + _m2(12)),
+                   color=(0, 0, 0), fill=(0, 0, 0), width=d)
+    # planting: filled 8 m x 10 m -> 80.0 m2
+    page.draw_rect(fitz.Rect(400.0, 40.0, 400.0 + _m2(8), 40.0 + _m2(10)),
+                   color=(0, 0, 0), fill=(0.6, 0.6, 0.6), width=d)
+    # paving: filled 10 m x 6 m -> 60.0 m2
+    page.draw_rect(fitz.Rect(72.0, 300.0, 72.0 + _m2(10), 300.0 + _m2(6)),
+                   color=(0, 0, 0), fill=(0.8, 0.8, 0.8), width=d)
+
+    # 2-digit MH anchor labels (the v2 "2-digit anchor class")
+    page.insert_text((404.0, 283.0), "MH-12", fontsize=8, fontname="helv")
+    page.insert_text((590.0, 283.0), "MH-34", fontsize=8, fontname="helv")
+
+    page.insert_textbox(
+        fitz.Rect(650, 495, 826, 520), "SCALE 1:200", fontsize=10, fontname="helv"
+    )
+    pdf = str(tmp_path / "synthetic-v2.pdf")
+    doc.save(pdf)
+    doc.close()
+    return pdf, {
+        "areas": {"asphalt": 144.0, "planting": 80.0, "paving": 60.0},
+        "counts": {"manhole": 2},
+        "scale_factor": V2_SCALE_FACTOR,
+    }
 
 
 def make_busy_drawing(tmp_path) -> tuple[str, dict]:

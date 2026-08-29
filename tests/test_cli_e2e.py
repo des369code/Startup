@@ -85,3 +85,28 @@ def test_cli_dir_empty_exits_1(tmp_path, capsys):
     d = tmp_path / "empty"; d.mkdir()
     assert main(["run", str(d), "--out", str(tmp_path / "o"), "--mock"]) == 1
     assert "no PDF files found" in capsys.readouterr().err
+
+
+def test_cli_dir_partial_corrupt_pdf_exits_1(tmp_path, capsys):
+    # one corrupt sheet must NOT silently cancel the dir: the good sheet still
+    # measures (its files exist), the failure is loud on stderr, rc = 1
+    d = tmp_path / "sheets"; d.mkdir()
+    p1, _ = make_synthetic_drawing(d)
+    (d / "x.pdf").write_text("this is not a pdf, just text")
+    out = tmp_path / "o"
+    rc = main(["run", str(d), "--out", str(out), "--mock"])
+    assert rc == 1
+    assert "cannot read PDF" in capsys.readouterr().err
+    assert (out / f"{Path(p1).stem}-takeoff.xlsx").exists()
+
+
+def test_cli_dir_dry_run_refused_no_files(tmp_path, capsys):
+    # --dry-run + a directory would silently skip the guard and burn a real
+    # client's money; refuse it and write nothing
+    d = tmp_path / "sheets"; d.mkdir()
+    make_synthetic_drawing(d)
+    out = tmp_path / "dryout"
+    rc = main(["run", str(d), "--dry-run", "--out", str(out), "--mock"])
+    assert rc == 1
+    assert "dry run" in capsys.readouterr().err
+    assert not out.exists()

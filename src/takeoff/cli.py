@@ -139,6 +139,32 @@ def _dry_run(pdf_path: str, scale_override: int | None) -> int:
     return 0
 
 
+def _measure_sheet(pdf_path: str, args, semantics):
+    """measure + reconcile with the single-file error mapping.
+
+    Shared by single-file and dir mode so both report failures identically:
+    extract errors (any exception) and measure()'s own PDF-level ValueErrors
+    (encrypted sheet, bad file) surface as "cannot read PDF"; anything else
+    is a real bug and gets a traceback. Returns (outcome, review_lines) or
+    None on failure."""
+    try:
+        sheet = extract_sheet(pdf_path)
+    except Exception as e:
+        print(f"cannot read PDF: {e}", file=sys.stderr)
+        return None
+    try:
+        outcome = measure(pdf_path, args.prompt, semantics=semantics,
+                          scale_override=args.scale)
+        review_lines = reconcile_runs(outcome.result, sheet.words, outcome.runs)
+    except ValueError as e:
+        print(f"cannot read PDF: {e}", file=sys.stderr)
+        return None
+    except Exception:
+        traceback.print_exc()
+        return None
+    return outcome, review_lines
+
+
 def _run(args) -> int:
     if args.mock:
         print(MOCK_BANNER)
@@ -150,24 +176,10 @@ def _run(args) -> int:
 
     semantics = FakeSemantics() if args.mock else ClaudeSemanticsClient()
 
-    try:
-        sheet = extract_sheet(args.pdf)
-    except Exception as e:
-        print(f"cannot read PDF: {e}", file=sys.stderr)
+    measured = _measure_sheet(args.pdf, args, semantics)
+    if measured is None:
         return 1
-
-    try:
-        outcome = measure(args.pdf, args.prompt, semantics=semantics,
-                          scale_override=args.scale)
-        review_lines = reconcile_runs(outcome.result, sheet.words, outcome.runs)
-    except ValueError as e:
-        # measure()'s own PDF-level errors (encrypted sheet, bad file) exit with
-        # the same user-facing shape as an extract failure.
-        print(f"cannot read PDF: {e}", file=sys.stderr)
-        return 1
-    except Exception:
-        traceback.print_exc()
-        return 1
+    outcome, review_lines = measured
 
     _observe(outcome)
     _print_summary(outcome.result, review_lines)
@@ -222,20 +234,11 @@ def _run_dir(args, dir_path: Path) -> int:
     overall = 0
     for f in files:
         fstr = str(f)
-        try:
-            outcome = measure(fstr, args.prompt, semantics=semantics,
-                              scale_override=args.scale)
-            sheet = extract_sheet(fstr)
-            review_lines = reconcile_runs(outcome.result, sheet.words,
-                                          outcome.runs)
-        except ValueError as e:
-            print(f"cannot read PDF: {e}", file=sys.stderr)
+        measured = _measure_sheet(fstr, args, semantics)
+        if measured is None:
             overall = 1
             continue
-        except Exception:
-            traceback.print_exc()
-            overall = 1
-            continue
+        outcome, review_lines = measured
         _observe(outcome)
         stem = f.stem
         try:

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from .measure import measure
 from .models import TakeoffResult
-from .semantics import ClaudeSemanticsClient, SemanticsClient
+from .semantics import SemanticsClient
 
 
 @dataclass
@@ -51,10 +51,12 @@ def merge_rollups(results: list[TakeoffResult]) -> list[TradeRollup]:
     ]
 
 
-def aggregate(files: list[str], semantics: SemanticsClient | None = None,
+def aggregate(files: list[str], semantics: SemanticsClient,
               scale_override: int | None = None) -> list[TradeRollup]:
-    """Run measure() per file, then roll up per trade across the sheets."""
-    semantics = semantics or ClaudeSemanticsClient()
+    """Run measure() per file, then roll up per trade across the sheets.
+
+    semantics is REQUIRED (no client default): a forgotten arg must fail at the
+    call site, not silently spawn an API-money-burning Claude client."""
     results = [measure(f, semantics=semantics, scale_override=scale_override).result
                for f in files]
     return merge_rollups(results)

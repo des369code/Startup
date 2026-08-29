@@ -243,7 +243,8 @@ def measure(pdf_path: str, user_prompt: str = "",
         else:
             confidence = 1.0
         measurements.append(Measurement(
-            class_id=cls.id, class_name_en=cls.name_en, measure=cls.measure,
+            class_id=cls.id, class_name_en=cls.name_en,
+            class_name_ms=cls.name_ms, measure=cls.measure,
             quantity=quantity, unit=unit,
             source_ids=[c.id for c in cands], confidence=confidence,
         ))

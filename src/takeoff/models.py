@@ -55,6 +55,7 @@ class Measurement:
                            #   mechanical math after that; 0.5 when the
                            #   semantics list showed mixed evidence; never 1.0
                            #   just because arithmetic was exact.
+    class_name_ms: str | None = None  # Malay legend name, from ClassSpec.name_ms
 
 
 @dataclass

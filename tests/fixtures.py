@@ -166,9 +166,12 @@ def make_busy_drawing(tmp_path) -> tuple[str, dict]:
     doc, page = _new_page()
     curve_run_pt, curve_chain_run_pt = _draw_synthetic_sheet(page)
 
-    # 401 fills: 2 mm x 2 mm rects at 5 mm pitch (21 cols x 20 rows grid)
-    side = _m(0.002)
-    pitch = _m(0.005)
+    # 401 fills: 50 mm x 50 mm rects at 60 mm pitch (21 cols x 20 rows grid).
+    # 50 mm site -> 0.5 mm paper -> ~1.417 pt side -> ~2.01 pt^2 area, above
+    # regions_from_fills' default min_area_pt2=0.5 so all 401 survive as
+    # candidates and the >400 overflow triggers.
+    side = _m(0.05)
+    pitch = _m(0.06)
     ox, oy = 700.0, 80.0
     for i in range(401):
         col, row = i % 21, i // 21

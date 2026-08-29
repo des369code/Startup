@@ -51,3 +51,13 @@ def test_cli_mock_banner(tmp_path, capsys):
     rc = main(["run", pdf, "--out", str(tmp_path / "o"), "--mock"])
     assert rc == 0
     assert "MOCK SEMANTICS" in capsys.readouterr().out
+
+
+def test_cli_wrong_file_type_exits_1(tmp_path, capsys):
+    # pymupdf can open a markdown file as a document; extract_sheet must
+    # reject anything that is not a PDF at the single chokepoint.
+    bad = tmp_path / "notes.md"
+    bad.write_text("# Title\n\nJust some notes, not a drawing.\n")
+    rc = main(["run", str(bad), "--out", str(tmp_path / "o"), "--mock"])
+    assert rc == 1
+    assert "cannot read PDF" in capsys.readouterr().err

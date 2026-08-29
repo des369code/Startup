@@ -192,7 +192,10 @@ def measure(pdf_path: str, user_prompt: str = "",
         if cls_id is not None and cls_id in known_classes:
             assign[c.id] = cls_id
 
-    unclassified = [c.id for c in candidates if c.id not in assign]
+    # exclude semantics-ignored ids: they are deliberately unmapped (legend
+    # swatches etc.), not unclassified — they get their own QA line below.
+    unclassified = [c.id for c in candidates
+                    if c.id not in assign and c.id not in sem.ignore_ids]
     if unclassified:
         qa.append(f"not measured: {len(unclassified)} candidates unclassified — human review")
     ignored = [cid for cid in sem.ignore_ids if cid in known]

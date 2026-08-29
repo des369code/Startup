@@ -24,6 +24,9 @@ def test_measure_area_matches_ground_truth(tmp_path):
     by_class = {m.class_name_en: m.quantity for m in outcome.result.measurements}
     assert by_class["Asphalt"] == pytest.approx(truth["areas"]["asphalt"], rel=1e-6)
     assert by_class["Planting"] == pytest.approx(truth["areas"]["planting"], rel=1e-6)
+    # legend/schedule rings carry words -> FakeSemantics must NOT count the
+    # legend box as playlot (48.54 was the pre-fix wrong number).
+    assert by_class["Playlot"] == pytest.approx(truth["polygonize_area"], rel=1e-6)
 
 
 def test_count_truth(tmp_path):

@@ -4,11 +4,24 @@ Imports only from this package (takeoff.semantics types), never from tests/,
 so it works whether or not tests/ is importable. It maps candidates by
 position, not by vision: fills by index (0 -> asphalt, 1 -> planting, rest ->
 asphalt, so a 401-grid-fills flood still produces valid output), polygonize
-regions -> playlot, runs by index (0 -> water pipe, rest -> curve), anchors
-whose word starts with MH -> manhole. Anything unmapped -> ignore_ids.
+regions -> playlot UNLESS their bbox contains any word text (legend/schedule
+boxes are rings TOO — those go to ignore_ids; a bare ring does not), runs by
+index (0 -> water pipe, rest -> curve), anchors whose word starts with MH ->
+manhole. Anything unmapped -> ignore_ids.
 """
 from .models import ClassSpec
 from .semantics import PromptTarget, SheetSemantics
+
+def _has_words(words, bbox) -> bool:
+    """Any fitz word bbox (x0, y0, x1, y1, ...) intersects the region bbox?
+
+    Controller ruling for the legend-ring discriminator: a legend/schedule box
+    contains text, a bare playlot ring does not (fixture-true).
+    """
+    return any(
+        not (w[2] < bbox[0] or w[0] > bbox[2] or w[3] < bbox[1] or w[1] > bbox[3])
+        for w in words)
+
 
 LEGEND_CLASSES = [
     ClassSpec(id="C1", name_en="Asphalt", measure="area"),
@@ -34,15 +47,17 @@ class FakeSemantics:
                         anchors: list) -> SheetSemantics:
         region_class, run_class, anchor_class = {}, {}, {}
         fill_idx = 0
+        ignored = []
         for c in regions:
             if c.source == "fill":
                 region_class[c.id] = "C2" if fill_idx == 1 else "C1"
                 fill_idx += 1
+            elif _has_words(sheet.words, c.bbox):
+                ignored.append(c.id)  # text-carrying ring: legend/schedule box
             else:
-                region_class[c.id] = "C3"  # polygonize -> playlot
+                region_class[c.id] = "C3"  # textless ring -> playlot
         for i, c in enumerate(runs):
             run_class[c.id] = "C4" if i == 0 else "C5"
-        ignored = []
         for a in anchors:
             if a.word.upper().startswith("MH"):
                 anchor_class[a.id] = "C6"

@@ -44,9 +44,10 @@ def test_annotated_pdf_has_quantity_label(tmp_path):
 
 
 def test_annotated_pdf_x_marks_unmeasured(tmp_path):
-    # every candidate is measured on the synthetic fixture -> no X marks
+    # the legend box ring is a lookalike: FakeSemantics ignores it (its bbox
+    # holds the legend words) -> exactly one uncovered candidate, one X mark
     out, _ = _annotate(tmp_path)
-    assert "X" not in fitz.open(out)[0].get_text()
+    assert fitz.open(out)[0].get_text().count("X") == 1
 
     # drop Playlot: its polygonize candidates become uncovered -> X-drawn once
     # per unmeasured candidate. Assert BOTH the text X and the vector overlay

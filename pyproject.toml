@@ -1,0 +1,19 @@
+[project]
+name = "takeoff"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pymupdf>=1.25", "shapely>=2.0", "anthropic>=0.45", "pydantic>=2.7", "pillow>=10.0", "openpyxl>=3.1"]
+
+[project.scripts]
+takeoff = "takeoff.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+markers = ["live: requires ANTHROPIC_API_KEY and network (deselect with '-m \"not live\"')"]

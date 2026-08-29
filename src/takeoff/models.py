@@ -22,6 +22,8 @@ class CandidateRun:
     points: list[tuple]    # polyline vertices, paper units (points)
     length_pt: float       # sum of segment lengths
     bbox: tuple
+    closed: bool = False   # closed ring (perimeter!) — True only when the
+                           # caller opts in via exclude_closed=False
 
 
 @dataclass

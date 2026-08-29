@@ -9,8 +9,10 @@ semantics, no files).
 import argparse
 import contextlib
 import io
+import json
 import sys
 import traceback
+from dataclasses import asdict
 from pathlib import Path
 
 with contextlib.redirect_stdout(io.StringIO()):
@@ -18,13 +20,14 @@ with contextlib.redirect_stdout(io.StringIO()):
     # import. The CLI's stdout IS the product output (README pastes it
     # verbatim), so keep the entry point clean — suppress once here, not in
     # every module that imports fitz.
+    from .aggregate import merge_rollups
     from .annotate import annotate_pdf
     from .geometry_regions import regions_from_fills, regions_from_polygonize
     from .geometry_runs import runs_from_strokes
     from .measure import _dedupe_regions, measure
     from .pdf_extract import extract_sheet, page_text_upper
     from .reconcile import reconcile_runs
-    from .report import to_json, write_xlsx
+    from .report import add_rollup_sheet, to_json, write_combined_takeoff, write_xlsx
     from .scale import apply_override, parse_scale
     from .semantics import ClaudeSemanticsClient, anchor_candidates
     from .testing import FakeSemantics
@@ -42,13 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser(
         "run",
-        help="measure one sheet and write xlsx + annotated PDF + qa.json",
-        description="Measure one sheet: extract vector geometry, classify every "
+        help="measure one sheet (PDF) or every PDF in a folder",
+        description="Measure vector sheets: extract vector geometry, classify every "
                     "candidate via Claude semantics, compute quantities in code "
-                    "(m2 / m / pcs), write the deliverable files. For a first "
-                    "non-mock run, set ANTHROPIC_API_KEY first.",
+                    "(m2 / m / pcs), write the deliverable files. A single PDF "
+                    "measures one sheet; a directory measures every *.pdf in it "
+                    "and adds a combined per-trade rollup. For a first non-mock "
+                    "run, set ANTHROPIC_API_KEY first.",
     )
-    run.add_argument("pdf", help="path to the drawing PDF (single vector sheet)")
+    run.add_argument("pdf", help="path to a drawing PDF, or a directory of PDFs")
     run.add_argument(
         "--prompt", default="", metavar="TEXT",
         help='classes to measure, e.g. "asphalt" — empty (default) means every '
@@ -137,6 +142,9 @@ def _dry_run(pdf_path: str, scale_override: int | None) -> int:
 def _run(args) -> int:
     if args.mock:
         print(MOCK_BANNER)
+    target = Path(args.pdf)
+    if target.is_dir():
+        return _run_dir(args, target)
     if args.dry_run:
         return _dry_run(args.pdf, args.scale)
 
@@ -176,6 +184,82 @@ def _run(args) -> int:
         traceback.print_exc()
         return 1
     return 0
+
+
+def _print_rollup_summary(rollups, qa_by_sheet: dict[str, list[str]]) -> None:
+    """One aggregate table (class | measure | total | unit | per-sheet count),
+    then the qa lines of any sheet that has them, prefixed 'sheet <name>:'."""
+    header = ("class", "measure", "total", "unit", "per-sheet count")
+    rows = [(r.class_name_en, r.measure, f"{r.total:.2f}", r.unit,
+             str(len(r.per_sheet))) for r in rollups]
+    table = [header, *rows]
+    widths = [max(len(row[i]) for row in table) for i in range(5)]
+    for row in table:
+        print("  ".join(row[i].ljust(widths[i]) for i in range(5)).rstrip())
+    for sheet, lines in qa_by_sheet.items():
+        for line in lines:
+            print(f"sheet {sheet}: {line}")
+
+
+def _run_dir(args, dir_path: Path) -> int:
+    """Measure every *.pdf in a directory; write per-sheet artifacts AND a
+    combined rollup xlsx/json. A per-sheet failure prints and returns rc 1
+    (loud, not silently partial) but the rest of the dir still measures."""
+    if args.dry_run:
+        print("dry run is single-sheet only — pass a PDF, not a directory",
+              file=sys.stderr)
+        return 1
+    files = sorted(dir_path.glob("*.pdf"))
+    if not files:
+        print(f"no PDF files found in {dir_path}", file=sys.stderr)
+        return 1
+
+    semantics = FakeSemantics() if args.mock else ClaudeSemanticsClient()
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    results, qa_by_sheet = [], {}
+    overall = 0
+    for f in files:
+        fstr = str(f)
+        try:
+            outcome = measure(fstr, args.prompt, semantics=semantics,
+                              scale_override=args.scale)
+            sheet = extract_sheet(fstr)
+            review_lines = reconcile_runs(outcome.result, sheet.words,
+                                          outcome.runs)
+        except ValueError as e:
+            print(f"cannot read PDF: {e}", file=sys.stderr)
+            overall = 1
+            continue
+        except Exception:
+            traceback.print_exc()
+            overall = 1
+            continue
+        _observe(outcome)
+        stem = f.stem
+        try:
+            write_xlsx(outcome.result, str(out / f"{stem}-takeoff.xlsx"))
+            annotate_pdf(fstr, outcome.result, outcome.regions, outcome.runs,
+                         str(out / f"{stem}-annotated.pdf"), outcome.anchors)
+            (out / f"{stem}-qa.json").write_text(to_json(outcome.result))
+        except Exception:
+            traceback.print_exc()
+            overall = 1
+            continue
+        results.append(outcome.result)
+        lines = [*review_lines, *outcome.result.qa]
+        if lines:
+            qa_by_sheet[outcome.result.sheet_name] = lines
+
+    rollups = merge_rollups(results)
+    bucket = out / f"{dir_path.name}-rollup.xlsx"
+    write_combined_takeoff(results, str(bucket))
+    add_rollup_sheet(str(bucket), rollups)
+    (out / f"{dir_path.name}-rollup.json").write_text(
+        json.dumps([asdict(r) for r in rollups], indent=2) + "\n")
+    _print_rollup_summary(rollups, qa_by_sheet)
+    return overall
 
 
 def main(argv: list[str] | None = None) -> int:

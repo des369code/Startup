@@ -1,6 +1,8 @@
 """CLI end-to-end: the product's only human entry point, exercised through
 main() with a real fixture sheet — extraction to annotated PDF and Excel."""
 
+import shutil
+
 import fitz
 from pathlib import Path
 
@@ -61,3 +63,25 @@ def test_cli_wrong_file_type_exits_1(tmp_path, capsys):
     rc = main(["run", str(bad), "--out", str(tmp_path / "o"), "--mock"])
     assert rc == 1
     assert "cannot read PDF" in capsys.readouterr().err
+
+
+def test_cli_dir_mode(tmp_path, capsys):
+    # the wedge demo: a folder of sheets -> per-sheet artifacts PLUS one
+    # combined rollup xlsx/json with two copies of the same sheet summed
+    d = tmp_path / "sitesheets"; d.mkdir()
+    p1, _ = make_synthetic_drawing(d)
+    shutil.copyfile(p1, str(d / "sheet2.pdf"))   # second stem: distinct sheet name
+    out = tmp_path / "o"
+    rc = main(["run", str(d), "--out", str(out), "--mock"])
+    assert rc == 0
+    assert (out / "sitesheets-rollup.xlsx").exists()
+    assert (out / "sitesheets-rollup.json").exists()
+    text = capsys.readouterr().out
+    assert "Asphalt" in text
+    assert "100.0" in text   # 50 + 50 across the two sheets
+
+
+def test_cli_dir_empty_exits_1(tmp_path, capsys):
+    d = tmp_path / "empty"; d.mkdir()
+    assert main(["run", str(d), "--out", str(tmp_path / "o"), "--mock"]) == 1
+    assert "no PDF files found" in capsys.readouterr().err

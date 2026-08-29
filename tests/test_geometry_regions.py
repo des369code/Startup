@@ -8,7 +8,10 @@ round-tripped polygon area differs from the exact world-derived product by
 ~6e-3 pt^2 (relative ~1.2e-7), inside the 1e-6 gate.
 """
 import pytest
-from takeoff.geometry_regions import regions_from_fills, regions_from_polygonize
+from takeoff.geometry_regions import (
+    FRAME_COVERAGE, regions_from_fills, regions_from_polygonize,
+)
+from takeoff.models import SheetData
 from takeoff.pdf_extract import extract_sheet
 from tests.fixtures import make_synthetic_drawing, world_to_pt
 
@@ -34,11 +37,32 @@ def test_polygonize_finds_stroke_bounded_region(tmp_path):
     assert target, f"stroke-bounded 36m2 region missing; got areas {[round(r.area_pt2) for r in regs]}"
 
 
-def test_polygonize_filters_page_frame_and_title_block(tmp_path):
-    # outer page frame + title block rectangle must NOT be candidates
-    regs = regions_from_polygonize(extract_sheet(make_synthetic_drawing(tmp_path)[0]))
-    areas = [round(r.area_pt2) for r in regs if round(r.area_pt2) > world_to_pt(40.0) * world_to_pt(20.0)]
-    assert not areas, "frame or title block leaked as candidate regions"
+def test_polygonize_filters_page_frame(tmp_path):
+    # Real frame-leak pin, mirroring the implementation's own rule (see
+    # FRAME_COVERAGE in geometry_regions.py): no returned region may cover
+    # >=95% of BOTH page dimensions. The REPLACED test used an area threshold
+    # of world_to_pt(40)*world_to_pt(20) = 642,817 pt^2 — LARGER than the
+    # frame's own area (826x579 = 478,254 pt^2), so a frame leak could never
+    # trip it; the test was vacuous.
+    pdf, _ = make_synthetic_drawing(tmp_path)
+    sheet = extract_sheet(pdf)
+    leaked = [
+        r.id for r in regions_from_polygonize(sheet)
+        if r.bbox[2] - r.bbox[0] >= FRAME_COVERAGE * sheet.page_w
+        and r.bbox[3] - r.bbox[1] >= FRAME_COVERAGE * sheet.page_h
+    ]
+    assert not leaked, f"page frame leaked: {leaked}"
+
+
+def test_fill_with_empty_items_no_index_error():
+    # a fill-styled path whose items list is empty (real-drawing edge) must
+    # skip cleanly, not IndexError at coords[0] in _shapely_polygon
+    sheet = SheetData(
+        page_w=100.0, page_h=100.0,
+        paths=[{"type": "f", "fill": (0, 0, 0), "items": []}],
+        words=[], png_bytes=b"",
+    )
+    assert regions_from_fills(sheet) == []
 
 
 def test_containment_dedupe_drops_inner_region(tmp_path):

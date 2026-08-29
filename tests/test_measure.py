@@ -8,7 +8,7 @@ from shapely.geometry import box
 
 from takeoff.measure import _mixed_evidence, measure
 from takeoff.models import CandidateRegion, ClassSpec
-from takeoff.semantics import SheetSemantics
+from takeoff.semantics import PromptTarget, SheetSemantics
 from takeoff.testing import FakeSemantics
 from tests.fixtures import (
     make_busy_drawing,
@@ -127,6 +127,50 @@ def test_mixed_evidence_class_flagged(tmp_path):
     assert by_class["Mixed"].quantity == pytest.approx(truth["areas"]["mixed"], rel=1e-6)
     assert by_class["Clean"].confidence == 1.0
     assert not any("class Clean" in line for line in result.qa)
+
+
+class _PromptNoCandidateSemantics(FakeSemantics):
+    """Targeted class C8 exists in the registry but nothing maps to it — the
+    once-silent empty prompt target. prompt_classes returns only C8."""
+
+    def sheet_semantics(self, sheet, regions, runs, anchors):
+        sem = super().sheet_semantics(sheet, regions, runs, anchors)
+        sem.classes.append(ClassSpec(id="C8", name_en="Fence", measure="area"))
+        return sem
+
+    def prompt_classes(self, user_prompt, classes):
+        assert user_prompt == "manhole"
+        return PromptTarget(target_ids=["C8"], not_found=[])
+
+
+def test_prompt_target_with_no_candidates_flagged(tmp_path):
+    # a class the user asked for with no mapped candidates must QA-flag, not
+    # vanish silently (the measurements loop skips it and qa said nothing)
+    pdf, _ = make_synthetic_drawing(tmp_path)
+    result = measure(pdf, user_prompt="manhole",
+                     semantics=_PromptNoCandidateSemantics()).result
+    assert any("class Fence: no candidates found — verify" in line
+               for line in result.qa)
+    assert all(m.class_name_en != "Fence" for m in result.measurements)
+
+
+class _InvalidMeasureSemantics(FakeSemantics):
+    """Registry leak probe: measure 'areas' (typo for 'area') must be dropped
+    and flagged, never silently counted via the else branch."""
+
+    def sheet_semantics(self, sheet, regions, runs, anchors):
+        sem = super().sheet_semantics(sheet, regions, runs, anchors)
+        sem.classes.append(ClassSpec(id="C8", name_en="Fence", measure="areas"))
+        return sem
+
+
+def test_invalid_measure_dropped_and_flagged(tmp_path):
+    pdf, _ = make_synthetic_drawing(tmp_path)
+    result = measure(pdf, user_prompt="", semantics=_InvalidMeasureSemantics()).result
+    assert any("class Fence: invalid measure 'areas' — dropped" in line
+               for line in result.qa)
+    assert all(m.class_name_en != "Fence" for m in result.measurements)
+    assert any(m.class_name_en == "Asphalt" for m in result.measurements)
 
 
 def test_mixed_evidence_guard_and_clean():

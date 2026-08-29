@@ -1,3 +1,6 @@
+import fitz
+import pytest
+
 from takeoff.pdf_extract import extract_sheet, page_text_upper
 from tests.fixtures import make_synthetic_drawing
 
@@ -14,3 +17,14 @@ def test_extract_twice_equal(tmp_path):
     pdf, _ = make_synthetic_drawing(tmp_path)
     a = extract_sheet(pdf); b = extract_sheet(pdf)
     assert len(a.words) == len(b.words) and len(a.png_bytes) == len(b.png_bytes)
+
+def test_extract_encrypted_pdf_raises(tmp_path):
+    # a password-protected PDF must hit the single-chokepoint ValueError
+    # (PyMuPDF does NOT auto-decrypt), not fail later with a cryptic error
+    doc = fitz.open()
+    doc.new_page()
+    encrypted = str(tmp_path / "encrypted.pdf")
+    doc.save(encrypted, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="secret")
+    doc.close()
+    with pytest.raises(ValueError):
+        extract_sheet(encrypted)

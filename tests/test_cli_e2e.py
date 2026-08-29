@@ -1,11 +1,15 @@
 """CLI end-to-end: the product's only human entry point, exercised through
 main() with a real fixture sheet — extraction to annotated PDF and Excel."""
 
+import json
 import shutil
-
-import fitz
 from pathlib import Path
 
+import fitz
+import pytest
+from openpyxl import load_workbook
+
+import takeoff.cli as cli_mod
 from takeoff.cli import main
 from tests.fixtures import make_synthetic_drawing
 
@@ -98,6 +102,39 @@ def test_cli_dir_partial_corrupt_pdf_exits_1(tmp_path, capsys):
     assert rc == 1
     assert "cannot read PDF" in capsys.readouterr().err
     assert (out / f"{Path(p1).stem}-takeoff.xlsx").exists()
+
+
+def test_cli_negative_scale_exits_nonzero(tmp_path, capsys):
+    # --scale must reject non-positive values before any work: argparse's
+    # type validator exits rc 2 and NOTHING is written. (--scale 0 used to
+    # zero every quantity; --scale -5 squared the factor into a wrong-but-
+    # plausible 0.13 instead of 50.00.)
+    pdf, _ = make_synthetic_drawing(tmp_path)
+    out = tmp_path / "o"
+    for bad in ("0", "-5"):
+        with pytest.raises(SystemExit) as e:
+            main(["run", pdf, "--scale", bad, "--out", str(out), "--mock"])
+        assert e.value.code != 0
+    assert "scale" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cli_review_lines_persist_to_qa_json(tmp_path, monkeypatch, capsys):
+    # REVIEW lines must be folded into result.qa BEFORE artifacts are written,
+    # so qa.json AND the xlsx qa_flags column carry them (not just stdout).
+    fake_line = ("ASPHALT: drawing says 41.00 m — engine measured 50.0 m — REVIEW")
+    monkeypatch.setattr(cli_mod, "reconcile_runs",
+                        lambda result, words, runs: [fake_line])
+    pdf, _ = make_synthetic_drawing(tmp_path)
+    out = tmp_path / "o"
+    rc = main(["run", pdf, "--out", str(out), "--mock"])
+    assert rc == 0
+    qa = json.loads((out / f"{Path(pdf).stem}-qa.json").read_text())
+    assert fake_line in qa["qa"]
+    wb = load_workbook(out / f"{Path(pdf).stem}-takeoff.xlsx")
+    assert any(fake_line in str(c.value)
+               for row in wb["takeoff"].iter_rows() for c in row)
+    assert fake_line in capsys.readouterr().out  # stdout keeps the line
 
 
 def test_cli_dir_dry_run_refused_no_files(tmp_path, capsys):

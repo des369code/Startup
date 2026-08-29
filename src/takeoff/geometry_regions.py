@@ -40,6 +40,8 @@ def _bezier_samples(p0, c1, c2, p1, n=8):
 
 def _shapely_polygon(coords):
     """coords -> Polygon; auto-close, heal invalid, reduce MultiPolygon to largest."""
+    if not coords:
+        return None  # empty item list (drawing edge): skip, don't IndexError
     # drop consecutive duplicate vertices (drawing join points repeat)
     deduped = [coords[0]]
     for p in coords[1:]:

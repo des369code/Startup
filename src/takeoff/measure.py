@@ -151,6 +151,17 @@ def measure(pdf_path: str, user_prompt: str = "",
 
     sem = semantics.sheet_semantics(sheet, regions, runs, anchors)
 
+    # Registry validation: measure must be one of the three computed kinds.
+    # Anything else would silently fall into the else (count) branch of the
+    # per-class math below — an "areas" class would be counted as pcs, not
+    # measured as m2. Drop the class from the registry and QA-flag it.
+    VALID_MEASURES = {"area", "length", "count"}
+    invalid = [c for c in sem.classes if c.measure not in VALID_MEASURES]
+    if invalid:
+        qa.extend(f"class {c.name_en}: invalid measure '{c.measure}' — dropped"
+                  for c in invalid)
+        sem.classes = [c for c in sem.classes if c.measure in VALID_MEASURES]
+
     # Coverage validation (never silently drop): every candidate id in exactly
     # one of region_class / run_class / anchor_class / ignore_ids.
     known = {c.id for c in candidates}
@@ -251,6 +262,14 @@ def measure(pdf_path: str, user_prompt: str = "",
             quantity=quantity, unit=unit,
             source_ids=[c.id for c in cands], confidence=confidence,
         ))
+
+    # Prompt-target coverage: a class the user explicitly asked for with NO
+    # mapped candidates is otherwise completely silent — the run looks clean
+    # while the requested class is missing from both measurements and QA.
+    if user_prompt.strip():
+        for cls in sem.classes:
+            if cls.id in target_ids and not groups[cls.id]:
+                qa.append(f"class {cls.name_en}: no candidates found — verify")
 
     result = TakeoffResult(
         sheet_name=Path(pdf_path).stem,

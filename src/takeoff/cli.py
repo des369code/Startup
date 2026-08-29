@@ -35,6 +35,19 @@ with contextlib.redirect_stdout(io.StringIO()):
 MOCK_BANNER = "MOCK SEMANTICS — no API calls, results are scripted"
 
 
+def _positive_int(s: str) -> int:
+    """argparse type for --scale: reject 0 and negatives before any work.
+
+    `--scale 0` used to zero every quantity; `--scale -5` squared the factor
+    and produced a wrong-but-plausible 0.13 instead of 50.00.
+    """
+    value = int(s)
+    if value <= 0:
+        raise argparse.ArgumentTypeError(
+            f"--scale must be a positive integer (got {value})")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="takeoff",
@@ -60,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
              "class the legend declares",
     )
     run.add_argument(
-        "--scale", type=int, default=None, metavar="N",
+        "--scale", type=_positive_int, default=None, metavar="N",
         help="scale factor override, e.g. 250 for a 1:250 sheet; when omitted "
              "the title-block scale text is parsed and Claude's reading is "
              "cross-checked",
@@ -100,7 +113,7 @@ def _observe(outcome) -> None:
           file=sys.stderr)
 
 
-def _print_summary(result, review_lines: list[str]) -> None:
+def _print_summary(result) -> None:
     header = ("class", "measure", "quantity", "unit")
     rows = [(m.class_name_en, m.measure, f"{m.quantity:.2f}", m.unit)
             for m in result.measurements]
@@ -108,7 +121,7 @@ def _print_summary(result, review_lines: list[str]) -> None:
     widths = [max(len(row[i]) for row in table) for i in range(4)]
     for row in table:
         print("  ".join(row[i].ljust(widths[i]) for i in range(4)).rstrip())
-    for line in [*review_lines, *result.qa]:
+    for line in result.qa:
         print(f"qa: {line}")
 
 
@@ -145,8 +158,11 @@ def _measure_sheet(pdf_path: str, args, semantics):
     Shared by single-file and dir mode so both report failures identically:
     extract errors (any exception) and measure()'s own PDF-level ValueErrors
     (encrypted sheet, bad file) surface as "cannot read PDF"; anything else
-    is a real bug and gets a traceback. Returns (outcome, review_lines) or
-    None on failure."""
+    is a real bug and gets a traceback. Returns outcome or None on failure.
+
+    REVIEW lines are folded into result.qa HERE, before any artifact is
+    written, so qa.json and the xlsx qa_flags column carry them — not only
+    stdout (the pre-fix leak)."""
     try:
         sheet = extract_sheet(pdf_path)
     except Exception as e:
@@ -155,14 +171,15 @@ def _measure_sheet(pdf_path: str, args, semantics):
     try:
         outcome = measure(pdf_path, args.prompt, semantics=semantics,
                           scale_override=args.scale)
-        review_lines = reconcile_runs(outcome.result, sheet.words, outcome.runs)
+        outcome.result.qa.extend(reconcile_runs(outcome.result, sheet.words,
+                                                outcome.runs))
     except ValueError as e:
         print(f"cannot read PDF: {e}", file=sys.stderr)
         return None
     except Exception:
         traceback.print_exc()
         return None
-    return outcome, review_lines
+    return outcome
 
 
 def _run(args) -> int:
@@ -176,13 +193,12 @@ def _run(args) -> int:
 
     semantics = FakeSemantics() if args.mock else ClaudeSemanticsClient()
 
-    measured = _measure_sheet(args.pdf, args, semantics)
-    if measured is None:
+    outcome = _measure_sheet(args.pdf, args, semantics)
+    if outcome is None:
         return 1
-    outcome, review_lines = measured
 
     _observe(outcome)
-    _print_summary(outcome.result, review_lines)
+    _print_summary(outcome.result)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -234,11 +250,10 @@ def _run_dir(args, dir_path: Path) -> int:
     overall = 0
     for f in files:
         fstr = str(f)
-        measured = _measure_sheet(fstr, args, semantics)
-        if measured is None:
+        outcome = _measure_sheet(fstr, args, semantics)
+        if outcome is None:
             overall = 1
             continue
-        outcome, review_lines = measured
         _observe(outcome)
         stem = f.stem
         try:
@@ -251,7 +266,7 @@ def _run_dir(args, dir_path: Path) -> int:
             overall = 1
             continue
         results.append(outcome.result)
-        lines = [*review_lines, *outcome.result.qa]
+        lines = outcome.result.qa
         if lines:
             qa_by_sheet[outcome.result.sheet_name] = lines
 

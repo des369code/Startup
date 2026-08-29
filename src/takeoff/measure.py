@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .geometry_regions import regions_from_fills, regions_from_polygonize
 from .geometry_runs import runs_from_strokes
-from .models import Anchor, CandidateRegion, CandidateRun, ClassSpec, Measurement, TakeoffResult
+from .models import Anchor, CandidateRegion, CandidateRun, Measurement, TakeoffResult
 from .pdf_extract import extract_sheet, page_text_upper
 from .scale import apply_override, parse_scale
 from .semantics import ClaudeSemanticsClient, SemanticsClient, anchor_candidates
@@ -76,7 +76,7 @@ def _key_mixed(counts: dict, weights: dict, total_w: float) -> bool:
     return False
 
 
-def _mixed_evidence(cls: ClassSpec, cands: list) -> bool:
+def _mixed_evidence(cands: list) -> bool:
     """M5 chain-consistency: is this class's evidence self-consistent?
 
     Two keyed histograms — source and fill_rgb (None excluded). Skip <3
@@ -154,6 +154,25 @@ def measure(pdf_path: str, user_prompt: str = "",
     # Coverage validation (never silently drop): every candidate id in exactly
     # one of region_class / run_class / anchor_class / ignore_ids.
     known = {c.id for c in candidates}
+
+    # Unique placement: an id claimed in >1 map is a conflict — no silent
+    # priority winner. Drop it from ALL maps and QA-flag it (H3).
+    placed_in: dict[str, list[str]] = {}
+    for map_name, mapping in (("region_class", sem.region_class),
+                              ("run_class", sem.run_class),
+                              ("anchor_class", sem.anchor_class),
+                              ("ignore_ids", sem.ignore_ids)):
+        for cid in mapping:
+            placed_in.setdefault(cid, []).append(map_name)
+    conflicts = sorted(cid for cid, maps in placed_in.items()
+                       if len(maps) > 1 and cid in known)
+    if conflicts:
+        qa.append(f"semantics returned conflicting maps for id {', '.join(conflicts)} — dropped")
+        for mapping in (sem.region_class, sem.run_class, sem.anchor_class):
+            for cid in conflicts:
+                mapping.pop(cid, None)
+        sem.ignore_ids = [x for x in sem.ignore_ids if x not in conflicts]
+
     claimed = (set(sem.region_class) | set(sem.run_class)
                | set(sem.anchor_class) | set(sem.ignore_ids))
     unknown = sorted(claimed - known)  # hallucinated ids: drop, do not crash
@@ -164,14 +183,12 @@ def measure(pdf_path: str, user_prompt: str = "",
     assign: dict[str, str] = {}   # candidate id -> class id
     for c in candidates:
         if c.id in sem.ignore_ids:
-            continue  # ignore wins over a contradictory map entry
+            continue
         cls_id = None
-        if c.id in sem.region_class:
-            cls_id = sem.region_class[c.id]
-        elif c.id in sem.run_class:
-            cls_id = sem.run_class[c.id]
-        elif c.id in sem.anchor_class:
-            cls_id = sem.anchor_class[c.id]
+        for mapping in (sem.region_class, sem.run_class, sem.anchor_class):
+            if c.id in mapping:
+                cls_id = mapping[c.id]
+                break
         if cls_id is not None and cls_id in known_classes:
             assign[c.id] = cls_id
 
@@ -220,7 +237,7 @@ def measure(pdf_path: str, user_prompt: str = "",
             unit = "m" if m_per_pt is not None else "pt"
         else:  # count
             quantity, unit = float(len(cands)), "pcs"
-        if _mixed_evidence(cls, cands):
+        if _mixed_evidence(cands):
             confidence = 0.5
             qa.append(f"class {cls.name_en}: mixed evidence — review")
         else:

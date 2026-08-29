@@ -188,6 +188,36 @@ def make_busy_drawing(tmp_path) -> tuple[str, dict]:
     return pdf, _ground_truth(curve_run_pt, curve_chain_run_pt, fill_count=401)
 
 
+def make_mixed_drawing(tmp_path) -> tuple[str, dict]:
+    """M5 mixed-evidence sheet: 8 small filled rects (0.1 m side, ~8 pt^2 —
+    above the min-area filters) + one large stroke-only ring (8 m x 8 m).
+
+    A class mixing 4 fills + the ring has 4/5 of its candidate count in fills
+    but ~99% of its area in the ring: the F4 fill-border relationship that
+    chain-consistency must flag. ground_truth["areas"] = {"mixed": 64.04,
+    "clean": 0.04}."""
+    doc, page = _new_page()
+    for i in range(8):
+        x = 72.0 + (i % 4) * 60.0
+        y = 60.0 + (i // 4) * 60.0
+        page.draw_rect(
+            fitz.Rect(x, y, x + _m(0.1), y + _m(0.1)),
+            color=(0, 0, 0), fill=(0, 0, 0), width=0.5,
+        )
+    page.draw_rect(fitz.Rect(300.0, 300.0, 300.0 + _m(8), 300.0 + _m(8)),
+                   color=(0, 0, 0), width=1.0)
+    page.insert_textbox(
+        fitz.Rect(650, 495, 826, 520), "SCALE 1:100", fontsize=10, fontname="helv"
+    )
+    pdf = str(tmp_path / "mixed.pdf")
+    doc.save(pdf)
+    doc.close()
+    return pdf, {
+        "areas": {"mixed": 4 * 0.1 * 0.1 + 8.0 * 8.0, "clean": 4 * 0.1 * 0.1},
+        "scale_factor": SCALE_FACTOR,
+    }
+
+
 def make_blank_drawing(tmp_path) -> tuple[str, dict]:
     """Writes a sheet with NO geometry — just the title block text (for the
     zero-candidate short-circuit test). ground_truth["candidates"] = 0."""

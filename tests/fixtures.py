@@ -57,7 +57,9 @@ def _new_page():
 
 
 def _draw_synthetic_sheet(page):
-    """Draw every standard fixture element. Returns the curve run length (pt)."""
+    """Draw every standard fixture element. Returns (curve_run_pt,
+    curve_chain_run_pt) — bezier-sampled length, and the full stroke chain
+    lead-in + sampled bezier length (both in pt)."""
     d = 1.0  # stroke width
 
     # page frame (outer border, stroke only) - exercises frame filtering
@@ -119,10 +121,14 @@ def _draw_synthetic_sheet(page):
     page.insert_textbox(
         fitz.Rect(650, 495, 826, 520), "SCALE 1:100", fontsize=10, fontname="helv"
     )
-    return curve_run_pt
+    # full chain oracle for run extraction (takeoff.geometry_runs extracts the
+    # whole stroke as one chain): lead-in chord + sampled bezier polyline,
+    # both sampler-derived inside the fixture, no hardcoded lengths.
+    lead_in_pt = ((cs[0] - 300.0) ** 2 + (cs[1] - 470.0) ** 2) ** 0.5
+    return curve_run_pt, lead_in_pt + curve_run_pt
 
 
-def _ground_truth(curve_run_pt, **extra):
+def _ground_truth(curve_run_pt, curve_chain_run_pt, **extra):
     truth = {
         "areas": {"asphalt": 50.0, "planting": 64.0},
         "runs": {"water_pipe": 24.0},
@@ -130,6 +136,7 @@ def _ground_truth(curve_run_pt, **extra):
         "scale_factor": SCALE_FACTOR,
         "polygonize_area": 36.0,
         "curve_run_pt": curve_run_pt,
+        "curve_chain_run_pt": curve_chain_run_pt,
     }
     truth.update(extra)
     return truth
@@ -141,21 +148,23 @@ def make_synthetic_drawing(tmp_path) -> tuple[str, dict]:
     ground_truth dict: {"areas": {"asphalt": 50.0, "planting": 64.0},
                         "runs": {"water_pipe": 24.0},
                         "counts": {"manhole": 2},
-                        "scale_factor": 100}
+                        "scale_factor": 100,
+                        "curve_run_pt": bezier-sampled length,
+                        "curve_chain_run_pt": lead-in + sampled bezier length}
     """
     doc, page = _new_page()
-    curve_run_pt = _draw_synthetic_sheet(page)
+    curve_run_pt, curve_chain_run_pt = _draw_synthetic_sheet(page)
     pdf = str(tmp_path / "synthetic.pdf")
     doc.save(pdf)
     doc.close()
-    return pdf, _ground_truth(curve_run_pt)
+    return pdf, _ground_truth(curve_run_pt, curve_chain_run_pt)
 
 
 def make_busy_drawing(tmp_path) -> tuple[str, dict]:
     """Writes a sheet with 401+ small closed fills (for overflow tests) plus the
     standard fixture classes. ground_truth["fill_count"] = 401."""
     doc, page = _new_page()
-    curve_run_pt = _draw_synthetic_sheet(page)
+    curve_run_pt, curve_chain_run_pt = _draw_synthetic_sheet(page)
 
     # 401 fills: 2 mm x 2 mm rects at 5 mm pitch (21 cols x 20 rows grid)
     side = _m(0.002)
@@ -173,7 +182,7 @@ def make_busy_drawing(tmp_path) -> tuple[str, dict]:
     pdf = str(tmp_path / "busy.pdf")
     doc.save(pdf)
     doc.close()
-    return pdf, _ground_truth(curve_run_pt, fill_count=401)
+    return pdf, _ground_truth(curve_run_pt, curve_chain_run_pt, fill_count=401)
 
 
 def make_blank_drawing(tmp_path) -> tuple[str, dict]:

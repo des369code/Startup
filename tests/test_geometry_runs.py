@@ -47,16 +47,15 @@ def test_curve_run_measured(tmp_path):
     sheet = extract_sheet(pdf)
     runs = runs_from_strokes(sheet)
     assert len(runs) >= 2                                 # pipe + curved run
-    # NOTE-for-controller: the fixture (task 2) draws the curved run as a
-    # 100.0 pt lead-in line (300,470)->(400,470) plus the Bezier, and records
-    # curve_run_pt = bezier-only sampled length. The extracted chain is the
-    # WHOLE stroke (lead-in end == bezier start, so they union into one chain),
-    # so its length is curve_run_pt + 100.0. Compare the bezier portion.
+    # ground_truth["curve_chain_run_pt"] = the full stroke chain (lead-in line
+    # + sampled bezier polyline) as computed by the fixture's own sampler —
+    # the extracted run must equal that oracle within 1e-6.
     curved = [
         r for r in runs
-        if abs((r.length_pt - 100.0) - truth["curve_run_pt"]) < 1e-6
+        if abs(r.length_pt - truth["curve_chain_run_pt"]) < 1e-6
     ]
     assert curved, (
         f"sampled curve not consistent with fixture sampler; "
-        f"runs={[r.length_pt for r in runs]}, truth={truth['curve_run_pt']}"
+        f"runs={[r.length_pt for r in runs]}, "
+        f"truth={truth['curve_chain_run_pt']}"
     )

@@ -319,3 +319,14 @@ def test_live_sheet_semantics_on_fixture(tmp_path):
     out = ClaudeSemanticsClient().sheet_semantics(sheet, regions, runs, anchors)
     assert isinstance(out, SheetSemantics)
     assert out.classes  # legend was readable
+
+
+# ------------------------------------------------------------------ fallback parse
+
+def test_extract_json_recovers_markdown_wrapped_object():
+    from takeoff.semantics import SemanticsError, _extract_json
+
+    wrapped = "**Registry**\n\n```json\n{\"classes\": []}\n```\nnotes here"
+    assert _extract_json(wrapped) == '{"classes": []}'
+    with pytest.raises(SemanticsError):
+        _extract_json("no json object, only a markdown table | a | b |")

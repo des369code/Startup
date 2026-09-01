@@ -14,7 +14,7 @@ from typing import Protocol
 
 import anthropic
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from .models import Anchor, CandidateRegion, CandidateRun, ClassSpec, SheetData
 
@@ -102,6 +102,21 @@ class SemanticsError(Exception):
     """The model call did not return a parsed output (refusal / stop)."""
 
 
+_JSON_INSTRUCTION = (
+    "Respond with ONLY one JSON object — no markdown, no prose, no code "
+    "fences — matching exactly this schema:\n"
+)
+
+
+def _extract_json(text: str) -> str:
+    """First '{' to last '}' — recovers a JSON object from a markdown-wrapped
+    reply (fences, prose, tables) for the non-beta fallback parse."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise SemanticsError(f"no JSON object in model response: {text[:200]!r}")
+    return text[start:end + 1]
+
+
 class SemanticsClient(Protocol):
     def sheet_semantics(self, sheet: SheetData, regions: list, runs: list,
                         anchors: list) -> SheetSemantics: ...
@@ -151,42 +166,55 @@ class ClaudeSemanticsClient:
     # -- the only places that touch the API ---------------------------------
     def _classify(self, image_bytes: bytes, table_text: str) -> SheetSemantics:
         b64 = base64.standard_b64encode(image_bytes).decode("ascii")
-        response = self._client.beta.messages.parse(
-            model="claude-opus-5",
-            max_tokens=16000,
-            system=[{"type": "text", "text": SYSTEM_PROMPT,
-                     "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": [
+        return self._parse(
+            SheetSemantics,
+            [{"role": "user", "content": [
                 {"type": "image",
                  "source": {"type": "base64", "media_type": "image/png", "data": b64}},
                 {"type": "text", "text": table_text},
             ]}],
-            thinking={"type": "adaptive"},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-            output_format=SheetSemantics,
         )
-        out = response.parsed_output
-        if out is None:
-            raise SemanticsError(f"sheet_semantics stopped: {response.stop_reason}")
-        return out
 
     def _classify_text(self, task: str) -> PromptTarget:
-        response = self._client.beta.messages.parse(
+        return self._parse(
+            PromptTarget,
+            [{"role": "user", "content": [{"type": "text", "text": task}]}],
+        )
+
+    def _parse(self, schema: type[BaseModel], messages: list) -> BaseModel:
+        """Native structured output first. Endpoints that do not implement the
+        structured-output beta (Z.ai and other Anthropic-compatible proxies)
+        ignore ``output_format`` and answer in freeform markdown, so fall back
+        to prompt-side JSON validated client-side. One fallback, no retries."""
+        try:
+            response = self._client.beta.messages.parse(
+                model="claude-opus-5",
+                max_tokens=16000,
+                system=[{"type": "text", "text": SYSTEM_PROMPT,
+                         "cache_control": {"type": "ephemeral"}}],
+                messages=messages,
+                thinking={"type": "adaptive"},
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+                output_format=schema,
+            )
+            if response.parsed_output is not None:
+                return response.parsed_output
+        except (anthropic.APIStatusError, ValidationError):
+            pass  # beta unsupported or rejected — prompt-side JSON instead
+        fallback = [{"role": m["role"], "content": [*m["content"],
+                    {"type": "text",
+                     "text": _JSON_INSTRUCTION
+                             + json.dumps(schema.model_json_schema())}]}
+                    for m in messages]
+        response = self._client.messages.create(
             model="claude-opus-5",
             max_tokens=16000,
-            system=[{"type": "text", "text": SYSTEM_PROMPT,
-                     "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": task}],
-            thinking={"type": "adaptive"},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-            output_format=PromptTarget,
+            system=SYSTEM_PROMPT,
+            messages=fallback,
         )
-        out = response.parsed_output
-        if out is None:
-            raise SemanticsError(f"prompt_classes stopped: {response.stop_reason}")
-        return out
+        text = "".join(b.text for b in response.content if b.type == "text")
+        return TypeAdapter(schema).validate_json(_extract_json(text))
 
 
 # --------------------------------------------------------------------------
